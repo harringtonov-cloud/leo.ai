@@ -11,7 +11,12 @@ export async function POST(request: Request) {
     // In production, require Firebase ID token. During local setup without Admin credentials,
     // the endpoint intentionally remains unavailable rather than silently becoming public.
     await requireUser(request);
-    const body = await request.json();
+    let body: { messages?: unknown; mode?: unknown; files?: unknown };
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({error:"Request body must be valid JSON."},{status:400});
+    }
     const messages = body.messages as ChatMessage[];
     const mode = body.mode === "code" ? "code" : "chat";
     if (!Array.isArray(messages) || messages.length === 0 || messages.length > 30) {
@@ -43,14 +48,23 @@ export async function POST(request: Request) {
       }),
       signal:AbortSignal.timeout(50_000)
     });
-    const data = await response.json();
-    if (!response.ok) return NextResponse.json({error:data?.error?.message || `OpenRouter error (${response.status})`},{status:502});
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const friendly = response.status === 401 ? "OpenRouter rejected the API key. Check OPENROUTER_API_KEY."
+        : response.status === 402 ? "OpenRouter credits are exhausted. Top up your balance or lower the model cost."
+        : response.status === 429 ? "OpenRouter rate limit reached. Please try again in a moment."
+        : data?.error?.message || `OpenRouter error (${response.status})`;
+      return NextResponse.json({error:friendly},{status:502});
+    }
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== "string") return NextResponse.json({error:"Model returned an empty response."},{status:502});
     return NextResponse.json({content,model,task:kind});
   } catch (error) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      return NextResponse.json({error:"The model took too long to respond. Please try again."},{status:504});
+    }
     const message = error instanceof Error ? error.message : "Unexpected server error";
-    const status = /Sign in|Firebase server authentication/.test(message) ? 401 : 500;
+    const status = /not configured/.test(message) ? 503 : /Sign in|ID token|Firebase/i.test(message) ? 401 : 500;
     return NextResponse.json({error:message},{status});
   }
 }

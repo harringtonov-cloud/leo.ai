@@ -33,3 +33,6 @@ h1 { font-size:clamp(28px,4vw,40px); line-height:1.12; letter-spacing:-1.6px; fo
 .notice { border:1px solid #5c503b; background:#302b21; color:#e7d8ba; border-radius:10px; padding:12px; font-size:13px; line-height:1.5; }
 pre { background:#111110; border:1px solid var(--line); border-radius:12px; padding:14px; overflow:auto; }
 @media(max-width:720px) { .shell { grid-template-columns:1fr; } .sidebar { display:none; } .workspace { padding:26px 16px; } .topbar { padding:0 16px; } }
+
+.mobile-modes { display:none; }
+@media(max-width:720px) { .mobile-modes { display:inline-flex; } }

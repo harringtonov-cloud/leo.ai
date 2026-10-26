@@ -192,6 +192,13 @@ export default function Home() {
           continue;
         }
 
+        if (
+          /(^|\/)(node_modules|\.git|\.next|dist|build)\//.test(path) ||
+          /(^|\/)\.env($|\.(?!example))/.test(path)
+        ) {
+          continue;
+        }
+
         if (output.length >= 80) break;
 
         const content = await entry.async("string");
@@ -270,6 +277,12 @@ export default function Home() {
           <span>{mode === "chat" ? "Leo Chat" : "Leo Code"}</span>
 
           <div className="actions">
+            <button
+              className="secondary mobile-modes"
+              onClick={() => setMode(mode === "chat" ? "code" : "chat")}
+            >
+              {mode === "chat" ? "Leo Code" : "Leo Chat"}
+            </button>
             <span className="badge">Auto model</span>
             <span className="badge">
               {user ? "Signed in" : "Preview"}
