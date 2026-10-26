@@ -5,35 +5,83 @@ import { Sandbox } from "@e2b/code-interpreter";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * Initial sandbox proof-of-concept: executes Python code in an isolated E2B sandbox.
- * Do not pass arbitrary shell commands or untrusted project startup scripts here.
- * Add strict per-user quotas, spend limits, timeouts, network policy, and audit logs
- * before enabling this route for public users.
- */
+type CodeExecution = {
+  logs?: {
+    stdout?: string[];
+    stderr?: string[];
+  };
+  results?: Array<{ text?: string }>;
+};
+
+type CodeRunner = {
+  runCode: (
+    code: string,
+    options?: { timeoutMs?: number }
+  ) => Promise<CodeExecution>;
+  kill: () => Promise<unknown>;
+};
+
 export async function POST(request: Request) {
-  let sandbox: Awaited<ReturnType<typeof Sandbox.create>> | undefined;
+  let sandbox: CodeRunner | undefined;
+
   try {
     const user = await requireUser(request);
     const body = await request.json();
     const code = body.code;
-    if (typeof code !== "string" || !code.trim() || code.length > 8000) {
-      return NextResponse.json({error:"Code must be 1–8000 characters."},{status:400});
+
+    if (
+      typeof code !== "string" ||
+      !code.trim() ||
+      code.length > 8000
+    ) {
+      return NextResponse.json(
+        { error: "Code must be 1–8000 characters." },
+        { status: 400 }
+      );
     }
-    if (!process.env.E2B_API_KEY) return NextResponse.json({error:"E2B_API_KEY is not configured."},{status:503});
-    // Only a short-lived isolated Python execution is enabled in this starter.
-    sandbox = await Sandbox.create({apiKey:process.env.E2B_API_KEY, timeoutMs:30_000});
-    const result = await sandbox.runCode(code, {timeoutMs:20_000});
+
+    if (!process.env.E2B_API_KEY) {
+      return NextResponse.json(
+        { error: "E2B_API_KEY is not configured." },
+        { status: 503 }
+      );
+    }
+
+    const created = await Sandbox.create({
+      apiKey: process.env.E2B_API_KEY,
+      timeoutMs: 30_000,
+    });
+
+    sandbox = created as unknown as CodeRunner;
+
+    const result = await sandbox.runCode(code, {
+      timeoutMs: 20_000,
+    });
+
     return NextResponse.json({
-      userId:user.uid,
-      stdout:result.logs?.stdout?.join("\n") || "",
-      stderr:result.logs?.stderr?.join("\n") || "",
-      results:(result.results || []).map((r: {text?:string})=>r.text || "").filter(Boolean).slice(0,10)
+      userId: user.uid,
+      stdout: result.logs?.stdout?.join("\n") || "",
+      stderr: result.logs?.stderr?.join("\n") || "",
+      results: (result.results || [])
+        .map((item) => item.text || "")
+        .filter(Boolean)
+        .slice(0, 10),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Sandbox failed";
-    return NextResponse.json({error:message},{status:500});
+    const message =
+      error instanceof Error ? error.message : "Sandbox failed";
+
+    return NextResponse.json(
+      { error: message },
+      { status: 500 }
+    );
   } finally {
-    if (sandbox) { try { await sandbox.kill(); } catch { /* best effort cleanup */ } }
+    if (sandbox) {
+      try {
+        await sandbox.kill();
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
   }
 }
