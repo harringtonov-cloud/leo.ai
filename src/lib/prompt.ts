@@ -6,6 +6,15 @@ type PromptInput = {
   projectName?: string;
   projectInstructions?: string;
   toolNames: string[];
+  style?: string;
+  customInstructions?: string;
+};
+
+const STYLES: Record<string, string> = {
+  concise: "Style: be brief and direct; skip preamble and filler; use short paragraphs.",
+  explanatory: "Style: explain step by step with context and examples, like a patient teacher; define terms the first time they appear.",
+  formal: "Style: use a formal, professional tone; no slang or emoji.",
+  friendly: "Style: use a warm, conversational tone.",
 };
 
 const ARTIFACT_RULES = `ARTIFACTS
@@ -30,6 +39,15 @@ export function buildSystemPrompt(input: PromptInput): string {
     : "No external tools are available in this session, so answer from your own knowledge and say when information may be outdated.";
 
   const parts = [identity, honesty, `Today's date: ${today}.`, tools, ARTIFACT_RULES];
+
+  if (input.style && STYLES[input.style]) parts.push(STYLES[input.style]);
+
+  if (input.customInstructions) {
+    parts.push(
+      "USER PREFERENCES (set by the user for all chats; follow them unless they conflict with the rules above):\n" +
+        input.customInstructions
+    );
+  }
 
   if (input.memories.length) {
     parts.push(

@@ -23,9 +23,9 @@ export class RateLimitError extends Error {
   }
 }
 
-export async function enforceLimits(uid: string, bucket: "chat" | "sandbox" = "chat") {
-  const perMinute = intEnv(bucket === "chat" ? "RATE_LIMIT_PER_MINUTE" : "SANDBOX_LIMIT_PER_MINUTE", bucket === "chat" ? 20 : 6);
-  const perDay = intEnv(bucket === "chat" ? "RATE_LIMIT_PER_DAY" : "SANDBOX_LIMIT_PER_DAY", bucket === "chat" ? 300 : 60);
+export async function enforceLimits(uid: string, bucket: "chat" | "sandbox" | "title" = "chat") {
+  const perMinute = bucket === "chat" ? intEnv("RATE_LIMIT_PER_MINUTE", 20) : bucket === "sandbox" ? intEnv("SANDBOX_LIMIT_PER_MINUTE", 6) : 15;
+  const perDay = bucket === "chat" ? intEnv("RATE_LIMIT_PER_DAY", 300) : bucket === "sandbox" ? intEnv("SANDBOX_LIMIT_PER_DAY", 60) : 300;
 
   const now = Date.now();
   const key = `${bucket}:${uid}`;

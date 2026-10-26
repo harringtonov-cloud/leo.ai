@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { artifactFilename, previewDocument } from "@/lib/artifacts";
 import type { Artifact } from "@/lib/artifacts";
+import { highlight } from "@/lib/highlight";
 import { CopyButton, Markdown } from "@/lib/markdown";
 
 export function ArtifactCard({ artifact, active, onOpen }: { artifact: Artifact; active: boolean; onOpen: () => void }) {
@@ -61,7 +62,7 @@ export function ArtifactPanel({ artifact, onClose }: { artifact: Artifact; onClo
           <div className="artmd"><Markdown text={artifact.content} /></div>
         )}
         {tab === "code" && (
-          <pre className="artcode"><code>{artifact.content}</code></pre>
+          <pre className="artcode"><code>{highlight(artifact.content, artifact.type === "code" ? artifact.language : "")}</code></pre>
         )}
       </div>
       {!artifact.complete && <div className="small artstatus">Still being written…</div>}

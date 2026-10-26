@@ -4,12 +4,16 @@ import { useState } from "react";
 import type { MemoryItem } from "@/lib/types";
 
 export function SettingsModal({
-  memory, canSync, webSearch, onWebSearch, onAddMemory, onDeleteMemory, onClose,
+  memory, canSync, webSearch, onWebSearch, style, onStyle, instructions, onInstructions, onAddMemory, onDeleteMemory, onClose,
 }: {
   memory: MemoryItem[];
   canSync: boolean;
   webSearch: boolean;
   onWebSearch: (value: boolean) => void;
+  style: string;
+  onStyle: (value: string) => void;
+  instructions: string;
+  onInstructions: (value: string) => void;
   onAddMemory: (text: string) => Promise<void>;
   onDeleteMemory: (id: string) => Promise<void>;
   onClose: () => void;
@@ -41,6 +45,18 @@ export function SettingsModal({
           <input type="checkbox" checked={webSearch} onChange={(e) => onWebSearch(e.target.checked)} />
           <span>Let Leo search the web and read pages</span>
         </label>
+
+        <h4 className="mdh">Personalisation</h4>
+        <label className="small" htmlFor="leo-style">Response style</label>
+        <select id="leo-style" className="select" style={{ display: "block", margin: "4px 0 10px" }} value={style} onChange={(e) => onStyle(e.target.value)}>
+          <option value="">Normal</option>
+          <option value="concise">Concise</option>
+          <option value="explanatory">Explanatory</option>
+          <option value="formal">Formal</option>
+          <option value="friendly">Friendly</option>
+        </select>
+        <label className="small" htmlFor="leo-instructions">Custom instructions (applied to every chat, saved in this browser)</label>
+        <textarea id="leo-instructions" className="field" rows={4} maxLength={2000} placeholder="e.g. Answer in Russian. I am a backend developer; skip basic explanations." value={instructions} onChange={(e) => onInstructions(e.target.value)} />
 
         <h4 className="mdh">Memory</h4>
         <p className="small">Short facts Leo can use in every chat. Leo saves one when you ask it to “remember” something. You can add or delete items here. Do not store passwords or sensitive personal data.</p>

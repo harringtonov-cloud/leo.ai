@@ -239,6 +239,8 @@ export async function POST(request: Request) {
       projectName: typeof project?.name === "string" ? project.name.slice(0, 100) : undefined,
       projectInstructions: typeof project?.instructions === "string" ? project.instructions.slice(0, 4000) : undefined,
       toolNames: tools,
+      style: typeof body.style === "string" ? body.style.slice(0, 20) : undefined,
+      customInstructions: typeof body.customInstructions === "string" ? body.customInstructions.trim().slice(0, 2000) || undefined : undefined,
     });
 
     const lastIndex = messages.length - 1;

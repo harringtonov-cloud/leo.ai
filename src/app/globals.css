@@ -140,3 +140,9 @@ textarea.field { resize:vertical; }
 .searchbox { margin:0; padding:7px 10px; font-size:13px; }
 .msg.user .msg-actions { justify-content:flex-end; }
 .hrow .hdel { padding:4px 6px; font-size:12px; }
+:root { --tok-c:#8b8a82; --tok-s:#a9d48a; --tok-n:#e0a46c; --tok-k:#d9a0e6; }
+:root[data-theme="light"] { --tok-c:#7a776e; --tok-s:#3d7a1f; --tok-n:#b05a10; --tok-k:#8a2fa0; }
+.tok-c { color:var(--tok-c); font-style:italic; }
+.tok-s { color:var(--tok-s); }
+.tok-n { color:var(--tok-n); }
+.tok-k { color:var(--tok-k); }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { highlight } from "@/lib/highlight";
 
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -124,7 +125,7 @@ function CodeBlock({ lang, code, onRunCode }: { lang: string; code: string; onRu
         </span>
       </div>
       <pre>
-        <code>{code}</code>
+        <code>{highlight(code, lang)}</code>
       </pre>
       {output?.text && <pre className="codeout">{output.text}</pre>}
       {output?.images.map((png, i) => (

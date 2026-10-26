@@ -43,6 +43,8 @@ const ACTIVE_PROJECT_KEY = "leo.project";
 const THEME_KEY = "leo.theme";
 const PREF_KEY = "leo.pref";
 const WEB_KEY = "leo.web";
+const STYLE_KEY = "leo.style";
+const INSTRUCTIONS_KEY = "leo.instructions";
 
 const PREFERENCES: { id: Preference; label: string }[] = [
   { id: "auto", label: "Auto model" },
@@ -112,6 +114,8 @@ export default function Home() {
   const [synced, setSynced] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [style, setStyle] = useState("");
+  const [customInstructions, setCustomInstructions] = useState("");
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
@@ -121,6 +125,9 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   const chatsRef = useRef<Chat[]>([]);
   const prevUid = useRef<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const newChatRef = useRef<() => void>(() => {});
+  const pendingTitles = useRef(new Map<string, string>());
   // Attachment payloads live only in memory for this session (not in history).
   const attachmentData = useRef(new WeakMap<Message, Attachment[]>());
 
@@ -137,6 +144,8 @@ export default function Home() {
       const savedPref = localStorage.getItem(PREF_KEY);
       if (PREFERENCES.some((p) => p.id === savedPref)) setPreference(savedPref as Preference);
       if (localStorage.getItem(WEB_KEY) === "off") setWebSearch(false);
+      setStyle(localStorage.getItem(STYLE_KEY) || "");
+      setCustomInstructions(localStorage.getItem(INSTRUCTIONS_KEY) || "");
       setActiveProjectId(localStorage.getItem(ACTIVE_PROJECT_KEY));
 
       const raw = localStorage.getItem(CHATS_KEY);
@@ -165,6 +174,14 @@ export default function Home() {
     if (!loaded) return;
     try { localStorage.setItem(PREF_KEY, preference); } catch {}
   }, [preference, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(STYLE_KEY, style);
+      localStorage.setItem(INSTRUCTIONS_KEY, customInstructions);
+    } catch {}
+  }, [style, customInstructions, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -251,7 +268,7 @@ export default function Home() {
     const entry: Chat = {
       id: chatId,
       // Keep a title the user renamed; only derive one for new chats.
-      title: existing?.title || first.replace(/\s+/g, " ").slice(0, 48),
+      title: existing?.title || pendingTitles.current.get(chatId) || first.replace(/\s+/g, " ").slice(0, 48),
       messages,
       mode,
       projectId: activeProjectId ?? undefined,
@@ -268,6 +285,18 @@ export default function Home() {
   }, [messages.length, busy]);
 
   useEffect(() => () => recognitionRef.current?.stop(), []);
+
+  // Keyboard shortcuts: Esc stops generation, Ctrl/Cmd+K focuses chat search, Ctrl/Cmd+Shift+O starts a new chat.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const mod = event.ctrlKey || event.metaKey;
+      if (event.key === "Escape") abortRef.current?.abort();
+      else if (mod && event.key.toLowerCase() === "k") { event.preventDefault(); setMenuOpen(true); searchRef.current?.focus(); }
+      else if (mod && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); newChatRef.current(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   /* ---------- artifacts ---------- */
   const artifacts = useMemo(() => {
@@ -313,6 +342,8 @@ export default function Home() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const startedChatId = chatId;
+    const isFirstExchange = history.filter((m) => m.role === "user").length === 1 && !chatsRef.current.some((c) => c.id === chatId);
 
     let content = "";
     let tools: ToolEvent[] = [];
@@ -355,6 +386,8 @@ export default function Home() {
           mode,
           preference,
           webSearch,
+          style: style || undefined,
+          customInstructions: customInstructions || undefined,
           files: mode === "code" ? projectFiles.slice(0, 35) : [],
           project: activeProject
             ? { name: activeProject.name, instructions: activeProject.instructions, files: activeProject.files }
@@ -400,6 +433,7 @@ export default function Home() {
         failure = "The model returned an empty response.";
       }
       setMessages([...history, snapshot()]);
+      if (isFirstExchange && content.trim() && !failure) void generateTitle(startedChatId, history[0].content, content);
     } catch (error) {
       if (controller.signal.aborted) {
         setStatus("Stopped.");
@@ -411,6 +445,25 @@ export default function Home() {
     } finally {
       setBusy(false);
       abortRef.current = null;
+    }
+  }
+
+  /** Asks the fast model for a short title after the first exchange; falls back silently to the first-message title. */
+  async function generateTitle(id: string, question: string, answer: string) {
+    try {
+      const response = await fetch("/api/title", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ question, answer: answer.replace(/<artifact[\s\S]*$/i, "") }),
+      });
+      if (!response.ok) return;
+      const data = await response.json().catch(() => null);
+      const title = typeof data?.title === "string" ? data.title.trim() : "";
+      if (!title) return;
+      pendingTitles.current.set(id, title);
+      if (chatsRef.current.some((c) => c.id === id)) updateChatMeta(id, { title });
+    } catch {
+      /* titles are cosmetic */
     }
   }
 
@@ -594,6 +647,8 @@ export default function Home() {
     setMenuOpen(false);
   }
 
+  newChatRef.current = newChat;
+
   function openChat(chat: Chat) {
     abortRef.current?.abort();
     setChatId(chat.id);
@@ -678,7 +733,7 @@ export default function Home() {
         </div>
 
         <div className="small">HISTORY</div>
-        <input className="field searchbox" type="search" placeholder="Search chats…" aria-label="Search chats" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input ref={searchRef} className="field searchbox" type="search" placeholder="Search chats…" aria-label="Search chats" value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="history">
           {chats.length === 0 && <div className="small">Your conversations will appear here.</div>}
           {chats.length > 0 && visibleChats.length === 0 && <div className="small">No chats match “{search}”.</div>}
@@ -822,7 +877,7 @@ export default function Home() {
                 <button className="secondary" onClick={() => attachRef.current?.click()} aria-label="Attach files">📎 Attach</button>
                 <button className={`secondary ${listening ? "toggled" : ""}`} aria-pressed={listening} onClick={toggleVoice} title="Dictate with your microphone">{listening ? "■ Listening…" : "🎤 Voice"}</button>
                 <button className={`secondary ${webSearch ? "toggled" : ""}`} aria-pressed={webSearch} onClick={() => setWebSearch(!webSearch)} title="Allow web search and page reading">🌐 Web {webSearch ? "on" : "off"}</button>
-                <span className="small">Shift + Enter for new line</span>
+                <span className="small">Shift + Enter for new line · Esc to stop</span>
               </div>
 
               {busy ? (
@@ -851,6 +906,10 @@ export default function Home() {
           canSync={canSync}
           webSearch={webSearch}
           onWebSearch={setWebSearch}
+          style={style}
+          onStyle={setStyle}
+          instructions={customInstructions}
+          onInstructions={setCustomInstructions}
           onAddMemory={async (text) => { if (uid) await addMemory(uid, text); }}
           onDeleteMemory={async (id) => { if (uid) await removeMemory(uid, id); }}
           onClose={() => setSettingsOpen(false)}

@@ -28,10 +28,10 @@ export function calculate(input: string): number {
   }
 
   function parseTerm(): number {
-    let value = parsePower();
+    let value = parseUnary();
     while (peek() === "*" || peek() === "/" || peek() === "%") {
       const op = src[pos++];
-      const right = parsePower();
+      const right = parseUnary();
       if (op === "*") value *= right;
       else if (op === "/") value /= right;
       else value %= right;
@@ -40,18 +40,19 @@ export function calculate(input: string): number {
   }
 
   function parsePower(): number {
-    const base = parseUnary();
+    const base = parsePrimary();
     if (peek() === "^" || (peek() === "*" && src[pos + 1] === "*")) {
       pos += src[pos] === "^" ? 1 : 2;
-      return Math.pow(base, parsePower()); // right-associative
+      return Math.pow(base, parseUnary()); // right-associative; allows 2^-1
     }
     return base;
   }
 
+  // Unary minus binds looser than ^, so -2^2 = -4.
   function parseUnary(): number {
     if (eat("-")) return -parseUnary();
     if (eat("+")) return parseUnary();
-    return parsePrimary();
+    return parsePower();
   }
 
   function parsePrimary(): number {
