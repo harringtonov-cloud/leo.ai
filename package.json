@@ -1,0 +1,29 @@
+{
+  "name": "leo-ai",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@e2b/code-interpreter": "^1.5.1",
+    "firebase": "^11.10.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.468.0",
+    "next": "^15.3.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "firebase-admin": "^13.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.28.0",
+    "eslint-config-next": "^15.3.3",
+    "typescript": "^5.8.3"
+  }
+}
