@@ -137,3 +137,6 @@ textarea.field { resize:vertical; }
 @media(max-width:720px) {
   .shell.withpanel { grid-template-columns:1fr; }
 }
+.searchbox { margin:0; padding:7px 10px; font-size:13px; }
+.msg.user .msg-actions { justify-content:flex-end; }
+.hrow .hdel { padding:4px 6px; font-size:12px; }

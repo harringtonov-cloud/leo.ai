@@ -46,6 +46,7 @@ export type Chat = {
   messages: Message[];
   mode: Mode;
   projectId?: string;
+  pinned?: boolean;
   updatedAt: number;
 };
 

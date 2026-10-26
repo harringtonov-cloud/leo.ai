@@ -34,6 +34,7 @@ export function subscribeChats(uid: string, onData: (chats: Chat[]) => void, onE
             title: String(data.title || "New chat"),
             mode: data.mode === "code" ? "code" : "chat",
             projectId: typeof data.projectId === "string" ? data.projectId : undefined,
+            pinned: Boolean(data.pinned),
             updatedAt: Number(data.updatedAt) || 0,
             messages: JSON.parse(String(data.messages || "[]")) as Message[],
           });
@@ -53,6 +54,7 @@ export async function saveChat(uid: string, chat: Chat) {
     title: chat.title.slice(0, 120),
     mode: chat.mode,
     projectId: chat.projectId ?? null,
+    pinned: Boolean(chat.pinned),
     updatedAt: chat.updatedAt,
     messages: JSON.stringify(persistableMessages(chat.messages)),
   });

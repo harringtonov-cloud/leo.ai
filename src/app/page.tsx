@@ -24,6 +24,19 @@ type Theme = "dark" | "light";
 type Preference = "auto" | "fast" | "reasoning" | "coding";
 type ProjectFile = { path: string; content: string };
 
+// Minimal typing for the browser Web Speech API (not in lib.dom for all TS versions).
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
 const CHATS_KEY = "leo.chats.v1";
 const PROJECTS_KEY = "leo.projects.v1";
 const ACTIVE_PROJECT_KEY = "leo.project";
@@ -98,6 +111,9 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
   const [synced, setSynced] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
@@ -234,10 +250,12 @@ export default function Home() {
     const first = messages.find((m) => m.role === "user")?.content || "New chat";
     const entry: Chat = {
       id: chatId,
-      title: first.replace(/\s+/g, " ").slice(0, 48),
+      // Keep a title the user renamed; only derive one for new chats.
+      title: existing?.title || first.replace(/\s+/g, " ").slice(0, 48),
       messages,
       mode,
       projectId: activeProjectId ?? undefined,
+      pinned: existing?.pinned,
       updatedAt: Date.now(),
     };
     setChats((previous) => [entry, ...previous.filter((c) => c.id !== chatId)].slice(0, 100));
@@ -248,6 +266,8 @@ export default function Home() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, busy]);
+
+  useEffect(() => () => recognitionRef.current?.stop(), []);
 
   /* ---------- artifacts ---------- */
   const artifacts = useMemo(() => {
@@ -418,6 +438,68 @@ export default function Home() {
     await runChat(history);
   }
 
+  async function editMessage(index: number, text: string) {
+    const old = messages[index];
+    const value = text.trim();
+    if (busy || !old || old.role !== "user" || !value) return;
+    const edited: Message = { ...old, content: value };
+    const data = attachmentData.current.get(old);
+    if (data) attachmentData.current.set(edited, data);
+    setActiveArtifactId(null);
+    await runChat([...messages.slice(0, index), edited]);
+  }
+
+  function updateChatMeta(id: string, patch: Partial<Pick<Chat, "title" | "pinned">>) {
+    const current = chatsRef.current.find((c) => c.id === id);
+    if (!current) return;
+    const next: Chat = { ...current, ...patch };
+    setChats((previous) => previous.map((c) => (c.id === id ? next : c)));
+    if (canSync && uid) saveChat(uid, next).catch((e) => console.error("Updating chat failed:", e));
+  }
+
+  function renameChat(chat: Chat) {
+    const title = window.prompt("Rename chat", chat.title)?.trim();
+    if (title) updateChatMeta(chat.id, { title: title.slice(0, 80) });
+  }
+
+  function toggleVoice() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+    const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!Ctor) {
+      setStatus("Voice input is not supported in this browser. Try Chrome, Edge or Safari.");
+      return;
+    }
+    const recognition = new Ctor();
+    recognition.lang = navigator.language || "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+      }
+      if (finalText) setPrompt((prev) => (prev && !prev.endsWith(" ") ? prev + " " : prev) + finalText.trim());
+    };
+    recognition.onerror = (event) => {
+      setStatus(event.error === "not-allowed" ? "Microphone access was denied." : `Voice input error: ${event.error}`);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
   async function runCode(code: string): Promise<RunOutput> {
     const response = await fetch("/api/sandbox", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ code }) });
     const data = await response.json().catch(() => null);
@@ -559,6 +641,14 @@ export default function Home() {
     if (activeProjectId === project.id) setActiveProjectId(null);
   }
 
+  const visibleChats = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? chats.filter((c) => c.title.toLowerCase().includes(q) || c.messages.some((m) => m.content.toLowerCase().includes(q)))
+      : chats;
+    return [...filtered].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt);
+  }, [chats, search]);
+
   const suggestions = mode === "chat" ? CHAT_SUGGESTIONS : CODE_SUGGESTIONS;
   const accountLabel = !user ? "Preview" : user.isAnonymous ? "Guest · Sign in" : user.email || user.displayName || "Account";
 
@@ -588,14 +678,18 @@ export default function Home() {
         </div>
 
         <div className="small">HISTORY</div>
+        <input className="field searchbox" type="search" placeholder="Search chats…" aria-label="Search chats" value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="history">
           {chats.length === 0 && <div className="small">Your conversations will appear here.</div>}
-          {chats.map((chat) => (
+          {chats.length > 0 && visibleChats.length === 0 && <div className="small">No chats match “{search}”.</div>}
+          {visibleChats.map((chat) => (
             <div key={chat.id} className={`hrow ${chat.id === chatId ? "active" : ""}`}>
               <button className="htitle" onClick={() => openChat(chat)} title={chat.title}>
-                {chat.mode === "code" ? "⌘ " : "◌ "}
+                {chat.pinned ? "📌 " : chat.mode === "code" ? "⌘ " : "◌ "}
                 {chat.title}
               </button>
+              <button className="hdel" aria-label={chat.pinned ? "Unpin chat" : "Pin chat"} onClick={() => updateChatMeta(chat.id, { pinned: !chat.pinned })}>📌</button>
+              <button className="hdel" aria-label="Rename chat" onClick={() => renameChat(chat)}>✎</button>
               <button className="hdel" aria-label="Delete chat" onClick={() => deleteChat(chat.id)}>×</button>
             </div>
           ))}
@@ -657,6 +751,7 @@ export default function Home() {
                   onRunCode={runCode}
                   onOpenArtifact={(a) => setActiveArtifactId(a.id)}
                   onRegenerate={() => void regenerate()}
+                  onEdit={(text) => void editMessage(index, text)}
                 />
               ))}
 
@@ -725,6 +820,7 @@ export default function Home() {
               <div className="actions">
                 <input ref={attachRef} hidden multiple type="file" accept="image/*,.pdf,.docx,text/*,.md,.json,.csv,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.html,.css,.sql,.yml,.yaml,.sh" onChange={(e) => void addAttachments(Array.from(e.target.files ?? []))} />
                 <button className="secondary" onClick={() => attachRef.current?.click()} aria-label="Attach files">📎 Attach</button>
+                <button className={`secondary ${listening ? "toggled" : ""}`} aria-pressed={listening} onClick={toggleVoice} title="Dictate with your microphone">{listening ? "■ Listening…" : "🎤 Voice"}</button>
                 <button className={`secondary ${webSearch ? "toggled" : ""}`} aria-pressed={webSearch} onClick={() => setWebSearch(!webSearch)} title="Allow web search and page reading">🌐 Web {webSearch ? "on" : "off"}</button>
                 <span className="small">Shift + Enter for new line</span>
               </div>

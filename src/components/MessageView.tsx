@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { splitArtifacts } from "@/lib/artifacts";
 import type { Artifact } from "@/lib/artifacts";
 import { CopyButton, Markdown } from "@/lib/markdown";
@@ -13,7 +13,7 @@ function hostOf(url: string) {
 }
 
 export function MessageView({
-  message, index, isLast, busy, activeArtifactId, onRunCode, onOpenArtifact, onRegenerate,
+  message, index, isLast, busy, activeArtifactId, onRunCode, onOpenArtifact, onRegenerate, onEdit,
 }: {
   message: Message;
   index: number;
@@ -23,7 +23,11 @@ export function MessageView({
   onRunCode: (code: string) => Promise<RunOutput>;
   onOpenArtifact: (artifact: Artifact) => void;
   onRegenerate: () => void;
+  onEdit: (text: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+
   const segments = useMemo(
     () => (message.role === "assistant" && !message.error ? splitArtifacts(message.content, index) : []),
     [message.content, message.role, message.error, index]
@@ -68,7 +72,23 @@ export function MessageView({
           )
         )
       ) : (
-        <div className="plain">{message.content}</div>
+        editing ? (
+          <div>
+            <textarea className="field" rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+            <div className="actions">
+              <button className="primary" disabled={busy || !draft.trim()} onClick={() => { setEditing(false); onEdit(draft); }}>Save & resend</button>
+              <button className="secondary" onClick={() => { setEditing(false); setDraft(message.content); }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="plain">{message.content}</div>
+        )
+      )}
+
+      {message.role === "user" && !editing && !busy && (
+        <div className="msg-actions">
+          <button className="ghost" onClick={() => { setDraft(message.content); setEditing(true); }}>✎ Edit</button>
+        </div>
       )}
 
       {message.images?.map((png, n) => (
