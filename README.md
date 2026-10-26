@@ -1,5 +1,16 @@
 # Leo AI — browser-first starter
 
+## What is new in 0.3
+- **Tools**: the model can call `web_search` (Tavily), `fetch_url` (SSRF-guarded), `run_python` (E2B, charts shown inline), `calculator` and `remember`. Tool activity and sources are shown under the answer.
+- **Attachments**: images, PDF, DOCX and text/code files (button, drag-and-drop or paste). Images/PDFs automatically use `MODEL_VISION`.
+- **Artifacts**: the model can deliver web pages, SVG, Markdown and code in a side panel with sandboxed live preview, copy and download.
+- **Projects**: custom instructions and knowledge files applied to every chat of a project.
+- **Memory**: facts Leo saves on request; viewable, addable and deletable in Settings.
+- **Cloud sync**: chats, projects and memory in Firestore (per-user rules in `firestore.rules`), with a browser-only fallback.
+- **Accounts**: Google and email sign-in; guest sessions upgrade without losing data.
+- **Better chat rendering**: tables, nested and task lists, quotes, links, italics, rules. LaTeX is not rendered.
+- **Limits**: per-minute and per-day request caps per user (see `.env.example`).
+
 Leo AI has two modes:
 - **Leo Chat**: general AI chat through OpenRouter.
 - **Leo Code**: ZIP text-file context and code review. The first version proposes edits in chat; it does not yet apply patches back into the ZIP.
@@ -30,7 +41,8 @@ The model router is in `src/lib/model-router.ts`. Set `MODEL_FAST`, `MODEL_GENER
 3. In Project settings → Your apps, register a Web app.
 4. Copy the web config values into `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, and `NEXT_PUBLIC_FIREBASE_APP_ID`.
 5. In Project settings → Service accounts, generate a private key. Put the full JSON on one line into `FIREBASE_SERVICE_ACCOUNT_JSON`. Treat this as a secret; never commit it.
-6. The starter does not yet store chat history in Firestore. Add Firestore rules and user-owned chat collections before implementing persistence.
+6. Create a Firestore database (Build → Firestore Database), then publish the rules from `firestore.rules` (Rules tab, or `firebase deploy --only firestore:rules`). Without them, cloud sync is denied and Leo falls back to this browser only.
+7. For Google sign-in enable the **Google** provider in Authentication and add your deployed domain under Authentication → Settings → Authorized domains. Email sign-in needs the **Email/Password** provider.
 
 Firebase Web config is not a substitute for security rules. Keep Firestore rules locked down and verify user identity on server routes.
 
@@ -64,5 +76,7 @@ Create an E2B account and add `E2B_API_KEY`. `/api/sandbox` is a proof-of-concep
 - Binary assets are skipped; files are not persisted.
 - AI suggestions are displayed as text, not automatically applied.
 - Sandbox endpoint only runs Python snippets; no arbitrary terminal, package install, or project build yet.
-- Chat history is in browser memory and disappears on refresh.
+- Attachments are limited to about 4 MB per message (Vercel request body limit); they are not saved in history, only their names.
+- Image/PDF understanding requires a multimodal model in `MODEL_VISION`; the default Groq text models cannot read images.
+- Each reply has a ~55 s budget on Vercel; long tool chains may be cut short.
 - Firebase Anonymous Auth is enabled by default for easy testing; add a real sign-in option before production.

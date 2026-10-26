@@ -1,4 +1,4 @@
-export type TaskKind = "chat" | "coding" | "reasoning";
+export type TaskKind = "chat" | "coding" | "reasoning" | "vision";
 
 export function classifyTask(prompt: string): TaskKind {
   const p = prompt.toLowerCase();
@@ -12,6 +12,8 @@ export function classifyTask(prompt: string): TaskKind {
 }
 
 export function modelFor(kind: TaskKind) {
+  // Vision-capable model is required for images and PDFs. Set MODEL_VISION to a multimodal model id.
+  if (kind === "vision") return process.env.MODEL_VISION || process.env.MODEL_GENERAL || "openai/gpt-4.1";
   if (kind === "coding") return process.env.MODEL_CODING || process.env.MODEL_GENERAL || "openai/gpt-4.1";
   if (kind === "reasoning") return process.env.MODEL_GENERAL || "anthropic/claude-sonnet-4";
   return process.env.MODEL_FAST || "openai/gpt-4.1-mini";

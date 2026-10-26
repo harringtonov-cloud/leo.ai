@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Every user can read and write only their own subtree (chats, projects, memory).
+    match /users/{uid}/chats/{id} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['title', 'mode', 'projectId', 'updatedAt', 'messages'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 120
+        && request.resource.data.messages is string && request.resource.data.messages.size() <= 900000;
+    }
+
+    match /users/{uid}/projects/{id} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'instructions', 'files', 'updatedAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 100
+        && request.resource.data.instructions is string && request.resource.data.instructions.size() <= 4000
+        && request.resource.data.files is list && request.resource.data.files.size() <= 30;
+    }
+
+    match /users/{uid}/memory/{id} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['text', 'createdAt'])
+        && request.resource.data.text is string && request.resource.data.text.size() <= 300;
+    }
+
+    // Usage counters are written only by the server (Admin SDK bypasses rules).
+    match /usage/{doc} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
