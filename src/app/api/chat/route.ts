@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { classifyTask, modelFor } from "@/lib/model-router";
+import type { TaskKind } from "@/lib/model-router";
 import { requireUser } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
     // In production, require Firebase ID token. During local setup without Admin credentials,
     // the endpoint intentionally remains unavailable rather than silently becoming public.
     await requireUser(request);
-    let body: { messages?: unknown; mode?: unknown; files?: unknown };
+    let body: { messages?: unknown; mode?: unknown; files?: unknown; preference?: unknown };
     try {
       body = await request.json();
     } catch {
@@ -26,7 +27,12 @@ export async function POST(request: Request) {
       return NextResponse.json({error:"Invalid message format or message too long."},{status:400});
     }
     const latest = [...messages].reverse().find(m => m.role === "user")?.content || "";
-    const kind = mode === "code" ? "coding" : classifyTask(latest);
+    const preferred: TaskKind | null =
+      body.preference === "fast" ? "chat"
+      : body.preference === "reasoning" ? "reasoning"
+      : body.preference === "coding" ? "coding"
+      : null;
+    const kind: TaskKind = preferred ?? (mode === "code" ? "coding" : classifyTask(latest));
     const model = modelFor(kind);
     const files = Array.isArray(body.files) ? body.files.slice(0,35) : [];
     const fileContext = mode === "code" && files.length

@@ -1,25 +1,78 @@
-
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  onAuthStateChanged,
-  signInAnonymously,
-} from "firebase/auth";
+import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import type { User } from "firebase/auth";
 import { auth, firebaseConfigured } from "@/lib/firebase";
+import { CopyButton, Markdown } from "@/lib/markdown";
 
 type Message = {
   role: "user" | "assistant";
   content: string;
+  error?: boolean;
 };
 
 type Mode = "chat" | "code";
+type Theme = "dark" | "light";
+type Preference = "auto" | "fast" | "reasoning" | "coding";
 
 type ProjectFile = {
   path: string;
   content: string;
 };
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  mode: Mode;
+  updatedAt: number;
+};
+
+const CHATS_KEY = "leo.chats.v1";
+const THEME_KEY = "leo.theme";
+const PREF_KEY = "leo.pref";
+
+const PREFERENCES: { id: Preference; label: string }[] = [
+  { id: "auto", label: "Auto model" },
+  { id: "fast", label: "Fast" },
+  { id: "reasoning", label: "Reasoning" },
+  { id: "coding", label: "Coding" },
+];
+
+const CHAT_SUGGESTIONS = [
+  "Explain a difficult topic in simple words",
+  "Help me plan my week",
+  "Write a polite email declining an invitation",
+  "Compare two approaches and recommend one",
+];
+
+const CODE_SUGGESTIONS = [
+  "Explain what this project does",
+  "Review the code and list the biggest problems",
+  "Suggest tests I should add",
+  "Find security issues in these files",
+];
+
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function isChat(value: unknown): value is Chat {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Partial<Chat>;
+  return (
+    typeof c.id === "string" &&
+    typeof c.title === "string" &&
+    Array.isArray(c.messages) &&
+    c.messages.every(
+      (m) =>
+        m &&
+        typeof m.content === "string" &&
+        (m.role === "user" || m.role === "assistant")
+    )
+  );
+}
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("chat");
@@ -30,7 +83,88 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [zipName, setZipName] = useState("");
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [chatId, setChatId] = useState(newId);
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [preference, setPreference] = useState<Preference>("auto");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Restore saved settings and chat history (browser only).
+  useEffect(() => {
+    try {
+      const savedTheme = localStorage.getItem(THEME_KEY);
+      if (savedTheme === "light" || savedTheme === "dark") {
+        setTheme(savedTheme);
+      }
+
+      const savedPref = localStorage.getItem(PREF_KEY);
+      if (PREFERENCES.some((p) => p.id === savedPref)) {
+        setPreference(savedPref as Preference);
+      }
+
+      const raw = localStorage.getItem(CHATS_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) setChats(parsed.filter(isChat));
+      }
+    } catch {
+      // Storage unavailable or corrupted: start fresh.
+    }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    if (!loaded) return;
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {}
+  }, [theme, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(PREF_KEY, preference);
+    } catch {}
+  }, [preference, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
+    } catch {}
+  }, [chats, loaded]);
+
+  // Keep the current conversation in the history list.
+  useEffect(() => {
+    if (!loaded || messages.length === 0) return;
+
+    setChats((previous) => {
+      const existing = previous.find((c) => c.id === chatId);
+      if (existing && existing.messages === messages) return previous;
+
+      const first =
+        messages.find((m) => m.role === "user")?.content || "New chat";
+
+      const entry: Chat = {
+        id: chatId,
+        title: first.replace(/\s+/g, " ").slice(0, 48),
+        messages,
+        mode,
+        updatedAt: Date.now(),
+      };
+
+      return [entry, ...previous.filter((c) => c.id !== chatId)].slice(0, 50);
+    });
+  }, [messages, chatId, mode, loaded]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, busy]);
 
   useEffect(() => {
     const firebaseAuth = auth;
@@ -74,28 +208,19 @@ export default function Home() {
     const currentUser = auth.currentUser;
 
     if (!currentUser) {
-      throw new Error(
-        "Firebase sign-in is not ready. Please try again."
-      );
+      throw new Error("Firebase sign-in is not ready. Please try again.");
     }
 
     return currentUser.getIdToken();
   }
 
-  async function send() {
-    const text = prompt.trim();
-
-    if (!text || busy) return;
-
-    const next: Message[] = [
-      ...messages,
-      { role: "user", content: text },
-    ];
-
-    setMessages(next);
-    setPrompt("");
+  async function runChat(history: Message[]) {
+    setMessages(history);
     setBusy(true);
     setStatus("");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const idToken = await token();
@@ -108,30 +233,34 @@ export default function Home() {
         headers.Authorization = `Bearer ${idToken}`;
       }
 
+      const payload = history
+        .filter((m) => !m.error)
+        .slice(-30)
+        .map((m) => ({ role: m.role, content: m.content.slice(0, 20_000) }));
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers,
+        signal: controller.signal,
         body: JSON.stringify({
-          messages: next,
+          messages: payload,
           mode,
+          preference,
           files: mode === "code" ? projectFiles.slice(0, 35) : [],
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data.error || "The request failed.");
+        throw new Error(data?.error || "The request failed.");
       }
 
-      if (typeof data.content !== "string") {
+      if (!data || typeof data.content !== "string") {
         throw new Error("The server returned an invalid response.");
       }
 
-      setMessages([
-        ...next,
-        { role: "assistant", content: data.content },
-      ]);
+      setMessages([...history, { role: "assistant", content: data.content }]);
 
       setStatus(
         typeof data.model === "string"
@@ -139,16 +268,45 @@ export default function Home() {
           : "Response received."
       );
     } catch (error) {
+      if (controller.signal.aborted) {
+        setStatus("Stopped.");
+        return;
+      }
+
       const message =
         error instanceof Error ? error.message : "Unknown error";
 
       setMessages([
-        ...next,
-        { role: "assistant", content: `Error: ${message}` },
+        ...history,
+        { role: "assistant", content: `Error: ${message}`, error: true },
       ]);
     } finally {
       setBusy(false);
+      abortRef.current = null;
     }
+  }
+
+  async function send() {
+    const text = prompt.trim();
+
+    if (!text || busy) return;
+
+    setPrompt("");
+    await runChat([...messages, { role: "user", content: text }]);
+  }
+
+  async function regenerate() {
+    if (busy || messages.length === 0) return;
+
+    const last = messages[messages.length - 1];
+    const history = last.role === "assistant" ? messages.slice(0, -1) : messages;
+
+    if (history.length === 0) return;
+    await runChat(history);
+  }
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
   async function uploadZip(file?: File) {
@@ -231,20 +389,63 @@ export default function Home() {
     }
   }
 
-  function clearChat() {
+  function newChat() {
+    abortRef.current?.abort();
+    setChatId(newId());
     setMessages([]);
     setStatus("");
     setPrompt("");
+    setMenuOpen(false);
   }
+
+  function openChat(chat: Chat) {
+    abortRef.current?.abort();
+    setChatId(chat.id);
+    setMessages(chat.messages);
+    setMode(chat.mode);
+    setStatus("");
+    setMenuOpen(false);
+  }
+
+  function deleteChat(id: string) {
+    setChats((previous) => previous.filter((c) => c.id !== id));
+    if (id === chatId) newChat();
+  }
+
+  function exportChat() {
+    if (messages.length === 0) {
+      setStatus("Nothing to export yet.");
+      return;
+    }
+
+    const markdown = messages
+      .map((m) => `### ${m.role === "user" ? "You" : "Leo"}\n\n${m.content}`)
+      .join("\n\n---\n\n");
+
+    const url = URL.createObjectURL(
+      new Blob([markdown], { type: "text/markdown" })
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "leo-chat.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const suggestions = mode === "chat" ? CHAT_SUGGESTIONS : CODE_SUGGESTIONS;
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {menuOpen && (
+        <div className="backdrop" onClick={() => setMenuOpen(false)} />
+      )}
+
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand">
           leo<span>·</span>ai
         </div>
 
-        <button className="newbtn" onClick={clearChat}>
+        <button className="newbtn" onClick={newChat}>
           ＋ New chat
         </button>
 
@@ -252,41 +453,110 @@ export default function Home() {
 
         <button
           className={`navbtn ${mode === "chat" ? "active" : ""}`}
-          onClick={() => setMode("chat")}
+          onClick={() => {
+            setMode("chat");
+            setMenuOpen(false);
+          }}
         >
           ◌　Leo Chat
         </button>
 
         <button
           className={`navbtn ${mode === "code" ? "active" : ""}`}
-          onClick={() => setMode("code")}
+          onClick={() => {
+            setMode("code");
+            setMenuOpen(false);
+          }}
         >
           ⌘　Leo Code
         </button>
 
+        <div className="small">HISTORY</div>
+
+        <div className="history">
+          {chats.length === 0 && (
+            <div className="small">Your conversations will appear here.</div>
+          )}
+
+          {chats.map((chat) => (
+            <div
+              key={chat.id}
+              className={`hrow ${chat.id === chatId ? "active" : ""}`}
+            >
+              <button
+                className="htitle"
+                onClick={() => openChat(chat)}
+                title={chat.title}
+              >
+                {chat.mode === "code" ? "⌘ " : "◌ "}
+                {chat.title}
+              </button>
+              <button
+                className="hdel"
+                aria-label="Delete chat"
+                onClick={() => deleteChat(chat.id)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+
         <div className="sidebar-foot small">
+          <div className="actions" style={{ marginBottom: 10 }}>
+            <button
+              className="secondary"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? "☀ Light" : "☾ Dark"}
+            </button>
+            <button className="secondary" onClick={exportChat}>
+              ⇩ Export
+            </button>
+          </div>
           A calm workspace for thinking and building.
           <br />
-          <br />
-          Starter version · 0.1
+          Starter version · 0.2
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
-          <span>{mode === "chat" ? "Leo Chat" : "Leo Code"}</span>
+          <div className="actions">
+            <button
+              className="secondary mobile-only"
+              aria-label="Open menu"
+              onClick={() => setMenuOpen(true)}
+            >
+              ☰
+            </button>
+            <span>{mode === "chat" ? "Leo Chat" : "Leo Code"}</span>
+          </div>
 
           <div className="actions">
             <button
-              className="secondary mobile-modes"
+              className="secondary mobile-only"
               onClick={() => setMode(mode === "chat" ? "code" : "chat")}
             >
               {mode === "chat" ? "Leo Code" : "Leo Chat"}
             </button>
-            <span className="badge">Auto model</span>
-            <span className="badge">
-              {user ? "Signed in" : "Preview"}
-            </span>
+
+            <select
+              className="select"
+              aria-label="Model preference"
+              value={preference}
+              onChange={(event) =>
+                setPreference(event.target.value as Preference)
+              }
+            >
+              {PREFERENCES.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+
+            <span className="badge">{user ? "Signed in" : "Preview"}</span>
           </div>
         </header>
 
@@ -304,20 +574,68 @@ export default function Home() {
                   ? "Ask questions, explore ideas, or work through a difficult problem."
                   : "Upload a project ZIP and ask Leo to explain, review, or propose code changes."}
               </div>
+
+              <div className="chips">
+                {suggestions.map((text) => (
+                  <button
+                    key={text}
+                    className="chip"
+                    onClick={() => setPrompt(text)}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="messages">
-              {messages.map((message, index) => (
-                <article
-                  className={`msg ${message.role}`}
-                  key={`${index}-${message.role}`}
-                >
-                  <div className="role">
-                    {message.role === "user" ? "You" : "Leo"}
-                  </div>
-                  {message.content}
-                </article>
-              ))}
+              {messages.map((message, index) => {
+                const isLast = index === messages.length - 1;
+
+                return (
+                  <article
+                    className={`msg ${message.role} ${
+                      message.error ? "err" : ""
+                    }`}
+                    key={`${index}-${message.role}`}
+                  >
+                    <div className="role">
+                      {message.role === "user" ? "You" : "Leo"}
+                    </div>
+
+                    {message.role === "assistant" && !message.error ? (
+                      <Markdown text={message.content} />
+                    ) : (
+                      message.content
+                    )}
+
+                    {message.role === "assistant" && (
+                      <div className="msg-actions">
+                        {!message.error && (
+                          <CopyButton text={message.content} />
+                        )}
+                        {isLast && !busy && (
+                          <button
+                            className="ghost"
+                            onClick={() => void regenerate()}
+                          >
+                            ↻ {message.error ? "Retry" : "Regenerate"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+
+              {busy && (
+                <div className="msg assistant typing">
+                  <div className="role">Leo</div>
+                  Thinking…
+                </div>
+              )}
+
+              <div ref={endRef} />
             </div>
           )}
 
@@ -356,15 +674,14 @@ export default function Home() {
                   hidden
                   type="file"
                   accept=".zip,application/zip"
-                  onChange={(event) =>
-                    uploadZip(event.target.files?.[0])
-                  }
+                  onChange={(event) => uploadZip(event.target.files?.[0])}
                 />
               </div>
 
               <div className="small" style={{ marginTop: 8 }}>
                 Files are sent as context. This version does not execute
                 uploaded code or automatically modify the ZIP archive.
+                Project files are not saved in chat history.
               </div>
             </div>
           )}
@@ -388,9 +705,7 @@ export default function Home() {
 
             <div className="compose-bottom">
               <div className="actions">
-                <span className="small">
-                  Shift + Enter for new line
-                </span>
+                <span className="small">Shift + Enter for new line</span>
 
                 {mode === "chat" && (
                   <button
@@ -402,13 +717,19 @@ export default function Home() {
                 )}
               </div>
 
-              <button
-                className="primary"
-                disabled={busy || !prompt.trim()}
-                onClick={() => void send()}
-              >
-                {busy ? "Thinking…" : "Send ↑"}
-              </button>
+              {busy ? (
+                <button className="secondary" onClick={stop}>
+                  ■ Stop
+                </button>
+              ) : (
+                <button
+                  className="primary"
+                  disabled={!prompt.trim()}
+                  onClick={() => void send()}
+                >
+                  Send ↑
+                </button>
+              )}
             </div>
           </div>
 
