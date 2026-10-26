@@ -141,7 +141,7 @@ export default function Home() {
 
   // Keep the current conversation in the history list.
   useEffect(() => {
-    if (!loaded || messages.length === 0) return;
+    if (!loaded || busy || messages.length === 0) return;
 
     setChats((previous) => {
       const existing = previous.find((c) => c.id === chatId);
@@ -160,7 +160,7 @@ export default function Home() {
 
       return [entry, ...previous.filter((c) => c.id !== chatId)].slice(0, 50);
     });
-  }, [messages, chatId, mode, loaded]);
+  }, [messages, chatId, mode, loaded, busy]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -221,6 +221,7 @@ export default function Home() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    let text = "";
 
     try {
       const idToken = await token();
@@ -250,23 +251,34 @@ export default function Home() {
         }),
       });
 
-      const data = await response.json().catch(() => null);
-
       if (!response.ok) {
+        const data = await response.json().catch(() => null);
         throw new Error(data?.error || "The request failed.");
       }
 
-      if (!data || typeof data.content !== "string") {
+      if (!response.body) {
         throw new Error("The server returned an invalid response.");
       }
 
-      setMessages([...history, { role: "assistant", content: data.content }]);
+      const model = response.headers.get("X-Leo-Model");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-      setStatus(
-        typeof data.model === "string"
-          ? `Selected model: ${data.model}`
-          : "Response received."
-      );
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        setMessages([...history, { role: "assistant", content: text }]);
+      }
+
+      text += decoder.decode();
+
+      if (!text.trim()) {
+        throw new Error("The model returned an empty response.");
+      }
+
+      setMessages([...history, { role: "assistant", content: text }]);
+      setStatus(model ? `Selected model: ${model}` : "Response received.");
     } catch (error) {
       if (controller.signal.aborted) {
         setStatus("Stopped.");
@@ -303,6 +315,33 @@ export default function Home() {
 
     if (history.length === 0) return;
     await runChat(history);
+  }
+
+  async function runCode(code: string): Promise<string> {
+    const idToken = await token();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (idToken) headers.Authorization = `Bearer ${idToken}`;
+
+    const response = await fetch("/api/sandbox", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ code }),
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(data?.error || "Sandbox request failed.");
+    }
+
+    const parts = [
+      data?.stdout,
+      data?.stderr ? `stderr:\n${data.stderr}` : "",
+      ...(Array.isArray(data?.results) ? data.results : []),
+    ].filter((part) => typeof part === "string" && part.trim());
+
+    return parts.join("\n") || "(no output)";
   }
 
   function stop() {
@@ -604,7 +643,7 @@ export default function Home() {
                     </div>
 
                     {message.role === "assistant" && !message.error ? (
-                      <Markdown text={message.content} />
+                      <Markdown text={message.content} onRunCode={runCode} />
                     ) : (
                       message.content
                     )}
@@ -628,7 +667,7 @@ export default function Home() {
                 );
               })}
 
-              {busy && (
+              {busy && messages[messages.length - 1]?.role === "user" && (
                 <div className="msg assistant typing">
                   <div className="role">Leo</div>
                   Thinking…

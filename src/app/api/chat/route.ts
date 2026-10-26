@@ -50,21 +50,68 @@ export async function POST(request: Request) {
       body:JSON.stringify({
         model,
         messages:[{role:"system",content:system},...messages.map((m,i)=>({role:m.role,content:m.content+(i===messages.length-1?fileContext:"")}))],
-        temperature:0.3
+        temperature:0.3,
+        stream:true
       }),
       signal:AbortSignal.timeout(50_000)
     });
-    const data = await response.json().catch(() => null);
     if (!response.ok) {
+      const data = await response.json().catch(() => null);
       const friendly = response.status === 401 ? "OpenRouter rejected the API key. Check OPENROUTER_API_KEY."
         : response.status === 402 ? "OpenRouter credits are exhausted. Top up your balance or lower the model cost."
         : response.status === 429 ? "OpenRouter rate limit reached. Please try again in a moment."
         : data?.error?.message || `OpenRouter error (${response.status})`;
       return NextResponse.json({error:friendly},{status:502});
     }
-    const content = data?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") return NextResponse.json({error:"Model returned an empty response."},{status:502});
-    return NextResponse.json({content,model,task:kind});
+    const upstream = response.body;
+    if (!upstream) return NextResponse.json({error:"Model returned an empty response."},{status:502});
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    // Convert OpenRouter's SSE stream into a plain text stream of content deltas.
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const reader = upstream.getReader();
+        let buffer = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const raw of lines) {
+              const line = raw.trim();
+              if (!line.startsWith("data:")) continue;
+              const payload = line.slice(5).trim();
+              if (!payload || payload === "[DONE]") continue;
+              try {
+                const json = JSON.parse(payload);
+                const delta = json?.choices?.[0]?.delta?.content;
+                if (typeof delta === "string" && delta) controller.enqueue(encoder.encode(delta));
+                if (json?.error?.message) controller.enqueue(encoder.encode(`\n\n[Error: ${json.error.message}]`));
+              } catch {
+                // Ignore keep-alive comments and partial JSON.
+              }
+            }
+          }
+        } catch {
+          controller.enqueue(encoder.encode("\n\n[Error: the response stream was interrupted]"));
+        } finally {
+          controller.close();
+        }
+      },
+      cancel() {
+        upstream.cancel().catch(() => {});
+      }
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Leo-Model": model,
+        "X-Leo-Task": kind
+      }
+    });
   } catch (error) {
     if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
       return NextResponse.json({error:"The model took too long to respond. Please try again."},{status:504});

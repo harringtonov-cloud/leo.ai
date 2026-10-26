@@ -71,3 +71,4 @@ pre { background:var(--code); border:1px solid var(--line); border-radius:12px; 
   .workspace { padding:26px 16px; }
   .topbar { padding:8px 16px; }
 }
+.codeout { border-top:1px solid var(--line) !important; color:var(--muted); max-height:240px; }

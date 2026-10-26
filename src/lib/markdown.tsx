@@ -66,16 +66,57 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return parts;
 }
 
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
+function CodeBlock({
+  lang,
+  code,
+  onRunCode,
+}: {
+  lang: string;
+  code: string;
+  onRunCode?: (code: string) => Promise<string>;
+}) {
+  const [running, setRunning] = useState(false);
+  const [output, setOutput] = useState("");
+  const runnable =
+    Boolean(onRunCode) && /^(python|py|python3)$/i.test(lang) && code.length <= 8000;
+
+  async function run() {
+    if (!onRunCode) return;
+    setRunning(true);
+    setOutput("");
+    try {
+      setOutput(await onRunCode(code));
+    } catch (error) {
+      setOutput(
+        `Error: ${error instanceof Error ? error.message : "Run failed"}`
+      );
+    } finally {
+      setRunning(false);
+    }
+  }
+
   return (
     <div className="codeblock">
       <div className="codehead">
         <span>{lang || "code"}</span>
-        <CopyButton text={code} />
+        <span>
+          {runnable && (
+            <button
+              type="button"
+              className="ghost"
+              disabled={running}
+              onClick={() => void run()}
+            >
+              {running ? "Running…" : "▶ Run in sandbox"}
+            </button>
+          )}
+          <CopyButton text={code} />
+        </span>
       </div>
       <pre>
         <code>{code}</code>
       </pre>
+      {output && <pre className="codeout">{output}</pre>}
     </div>
   );
 }
@@ -86,7 +127,13 @@ const isHeading = (line: string) => /^#{1,4}\s+/.test(line);
 const isFence = (line: string) => /^\s*```/.test(line);
 
 /** Small, dependency-free Markdown renderer: code blocks, headings, lists, bold, inline code. */
-export function Markdown({ text }: { text: string }) {
+export function Markdown({
+  text,
+  onRunCode,
+}: {
+  text: string;
+  onRunCode?: (code: string) => Promise<string>;
+}) {
   const lines = text.split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -104,7 +151,14 @@ export function Markdown({ text }: { text: string }) {
         i++;
       }
       i++; // closing fence
-      blocks.push(<CodeBlock key={key} lang={lang} code={code.join("\n")} />);
+      blocks.push(
+        <CodeBlock
+          key={key}
+          lang={lang}
+          code={code.join("\n")}
+          onRunCode={onRunCode}
+        />
+      );
       continue;
     }
 
