@@ -18,24 +18,31 @@ export default function Home() {
   const [projectFiles, setProjectFiles] = useState<{path:string; content:string}[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Anonymous sign-in keeps the starter easy to try. Add email/password or OAuth later.
+  
+  // Anonymous sign-in keeps the starter easy to try.
   useEffect(() => {
-    if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, async current => {
-      if (current) setUser(current);
-      else {
-        try { await signInAnonymously(auth); } catch { setStatus("Firebase Auth is not ready. Configure Firebase or use local demo mode."); }
+    const firebaseAuth = auth;
+    if (!firebaseAuth) {
+      setStatus("Firebase не настроен. Проверь переменные окружения.");
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (current) => {
+      if (current) {
+        setUser(current);
+      } else {
+        try {
+          await signInAnonymously(firebaseAuth);
+        } catch {
+          setStatus(
+            "Firebase Auth is not ready. Check Firebase configuration and anonymous sign-in."
+          );
+        }
       }
     });
+
     return () => unsubscribe();
   }, []);
-
-  async function token() {
-    if (!firebaseConfigured || !auth) return "";
-    const current = auth.currentUser;
-    if (!current) throw new Error("Signing in to Firebase… please try again.");
-    return current.getIdToken();
-  }
 
   async function send() {
     const text = prompt.trim();
