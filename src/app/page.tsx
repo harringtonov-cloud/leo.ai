@@ -32,7 +32,6 @@ export default function Home() {
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Firebase anonymous authentication.
   useEffect(() => {
     const firebaseAuth = auth;
 
@@ -58,7 +57,7 @@ export default function Home() {
         } catch (error) {
           console.error("Firebase sign-in failed:", error);
           setStatus(
-            "Firebase sign-in failed. Check Firebase configuration and make sure Anonymous sign-in is enabled."
+            "Firebase sign-in failed. Check Firebase configuration and enable Anonymous sign-in."
           );
         }
       }
@@ -67,7 +66,6 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // Obtain the Firebase ID token for protected API requests.
   async function token(): Promise<string> {
     if (!firebaseConfigured || !auth) {
       return "";
@@ -81,7 +79,7 @@ export default function Home() {
       );
     }
 
-    return await currentUser.getIdToken();
+    return currentUser.getIdToken();
   }
 
   async function send() {
