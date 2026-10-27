@@ -1,0 +1,5 @@
+torch>=2.3
+numpy
+tokenizers
+# only needed to stream public datasets from Hugging Face in prepare.py --hf
+datasets

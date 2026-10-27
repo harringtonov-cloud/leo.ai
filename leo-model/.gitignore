@@ -1,0 +1,6 @@
+data/
+out/
+sft_out/
+__pycache__/
+*.pt
+*.bin
