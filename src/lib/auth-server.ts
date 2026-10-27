@@ -1,12 +1,15 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 
-function adminAuth() {
+export function adminApp() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!raw) throw new Error("Firebase server authentication is not configured.");
   const serviceAccount = JSON.parse(raw);
-  const app = getApps()[0] ?? initializeApp({ credential: cert(serviceAccount) });
-  return getAuth(app);
+  return getApps()[0] ?? initializeApp({ credential: cert(serviceAccount) });
+}
+
+function adminAuth() {
+  return getAuth(adminApp());
 }
 
 export async function requireUser(request: Request) {

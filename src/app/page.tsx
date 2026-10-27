@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithCustomToken,
+  signOut,
+} from "firebase/auth";
 import type { User } from "firebase/auth";
 import { auth, firebaseConfigured } from "@/lib/firebase";
 import { CopyButton, Markdown } from "@/lib/markdown";
@@ -29,7 +34,9 @@ type Chat = {
   updatedAt: number;
 };
 
-const CHATS_KEY = "leo.chats.v1";
+const LEGACY_CHATS_KEY = "leo.chats.v1";
+const MEMORY_KEY = "leo.memory";
+const chatsKey = (uid: string) => `leo.chats.v2.${uid}`;
 const THEME_KEY = "leo.theme";
 const PREF_KEY = "leo.pref";
 
@@ -53,6 +60,10 @@ const CODE_SUGGESTIONS = [
   "Suggest tests I should add",
   "Find security issues in these files",
 ];
+
+function clip(text: string, max: number) {
+  return text.replace(/\s+/g, " ").trim().slice(0, max);
+}
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -89,6 +100,22 @@ export default function Home() {
   const [preference, setPreference] = useState<Preference>("auto");
   const [menuOpen, setMenuOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [chatsOwner, setChatsOwner] = useState<string | null>(null);
+  const [memory, setMemory] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authStep, setAuthStep] = useState<"email" | "code">("email");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authCode, setAuthCode] = useState("");
+  const [authMsg, setAuthMsg] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // Chat history is stored per account (or per guest) in this browser.
+  const storageKey = firebaseConfigured
+    ? user
+      ? chatsKey(user.uid)
+      : null
+    : chatsKey("local");
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -106,16 +133,47 @@ export default function Home() {
         setPreference(savedPref as Preference);
       }
 
-      const raw = localStorage.getItem(CHATS_KEY);
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
-        if (Array.isArray(parsed)) setChats(parsed.filter(isChat));
-      }
+      setMemory(localStorage.getItem(MEMORY_KEY) === "1");
     } catch {
       // Storage unavailable or corrupted: start fresh.
     }
     setLoaded(true);
   }, []);
+
+  // Load the history that belongs to the current account.
+  useEffect(() => {
+    if (!storageKey) return;
+
+    let list: Chat[] = [];
+    try {
+      let raw = localStorage.getItem(storageKey);
+      if (raw === null) {
+        const legacy = localStorage.getItem(LEGACY_CHATS_KEY);
+        if (legacy) {
+          raw = legacy;
+          localStorage.removeItem(LEGACY_CHATS_KEY);
+        }
+      }
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) list = parsed.filter(isChat);
+      }
+    } catch {
+      // Corrupted storage: start with an empty history.
+    }
+
+    setChats(list);
+    setChatsOwner(storageKey);
+    setChatId(newId());
+    setMessages([]);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(MEMORY_KEY, memory ? "1" : "0");
+    } catch {}
+  }, [memory, loaded]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -133,15 +191,16 @@ export default function Home() {
   }, [preference, loaded]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!storageKey || chatsOwner !== storageKey) return;
     try {
-      localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
+      localStorage.setItem(storageKey, JSON.stringify(chats));
     } catch {}
-  }, [chats, loaded]);
+  }, [chats, storageKey, chatsOwner]);
 
   // Keep the current conversation in the history list.
   useEffect(() => {
-    if (!loaded || busy || messages.length === 0) return;
+    if (!storageKey || chatsOwner !== storageKey) return;
+    if (busy || messages.length === 0) return;
 
     setChats((previous) => {
       const existing = previous.find((c) => c.id === chatId);
@@ -160,7 +219,7 @@ export default function Home() {
 
       return [entry, ...previous.filter((c) => c.id !== chatId)].slice(0, 50);
     });
-  }, [messages, chatId, mode, loaded, busy]);
+  }, [messages, chatId, mode, storageKey, chatsOwner, busy]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -183,6 +242,8 @@ export default function Home() {
           setUser(currentUser);
           return;
         }
+
+        setUser(null);
 
         try {
           const credential = await signInAnonymously(firebaseAuth);
@@ -212,6 +273,37 @@ export default function Home() {
     }
 
     return currentUser.getIdToken();
+  }
+
+  function buildMemory(): string {
+    if (!memory) return "";
+
+    const lines: string[] = [];
+    let total = 0;
+
+    for (const chat of chats.slice(0, 15)) {
+      if (chat.id === chatId) continue;
+
+      const asked = chat.messages
+        .filter((m) => m.role === "user")
+        .slice(0, 3)
+        .map((m) => clip(m.content, 150))
+        .join(" / ");
+
+      const answer = [...chat.messages]
+        .reverse()
+        .find((m) => m.role === "assistant" && !m.error);
+
+      const line = `- "${clip(chat.title, 48)}" — user: ${asked}${
+        answer ? ` | Leo: ${clip(answer.content, 200)}` : ""
+      }`;
+
+      total += line.length;
+      if (total > 4500) break;
+      lines.push(line);
+    }
+
+    return lines.join("\n");
   }
 
   async function runChat(history: Message[]) {
@@ -247,6 +339,7 @@ export default function Home() {
           messages: payload,
           mode,
           preference,
+          memory: buildMemory(),
           files: mode === "code" ? projectFiles.slice(0, 35) : [],
         }),
       });
@@ -428,6 +521,104 @@ export default function Home() {
     }
   }
 
+  function openAuth() {
+    setAuthOpen(true);
+    setAuthStep("email");
+    setAuthCode("");
+    setAuthMsg("");
+    setSettingsOpen(false);
+    setMenuOpen(false);
+  }
+
+  async function requestCode() {
+    setAuthBusy(true);
+    setAuthMsg("");
+
+    try {
+      const response = await fetch("/api/auth/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail }),
+      });
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Could not send the code.");
+      }
+
+      setAuthStep("code");
+      setAuthMsg("We sent a 6-digit code to your email. It expires in 10 minutes.");
+    } catch (error) {
+      setAuthMsg(error instanceof Error ? error.message : "Could not send the code.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyCode() {
+    const firebaseAuth = auth;
+    if (!firebaseAuth) return;
+
+    setAuthBusy(true);
+    setAuthMsg("");
+
+    try {
+      const response = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail, code: authCode }),
+      });
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || typeof data?.token !== "string") {
+        throw new Error(data?.error || "Could not verify the code.");
+      }
+
+      // Carry this browser's guest history over to the account.
+      try {
+        const targetKey = chatsKey(String(data.uid));
+        let existing: Chat[] = [];
+        const raw = localStorage.getItem(targetKey);
+        if (raw) {
+          const parsed: unknown = JSON.parse(raw);
+          if (Array.isArray(parsed)) existing = parsed.filter(isChat);
+        }
+        const known = new Set(existing.map((c) => c.id));
+        const merged = [...existing, ...chats.filter((c) => !known.has(c.id))]
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, 50);
+        localStorage.setItem(targetKey, JSON.stringify(merged));
+      } catch {}
+
+      await signInWithCustomToken(firebaseAuth, data.token);
+      setAuthOpen(false);
+      setAuthEmail("");
+      setAuthCode("");
+      setStatus("Signed in.");
+    } catch (error) {
+      setAuthMsg(error instanceof Error ? error.message : "Could not verify the code.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function logout() {
+    if (!auth) return;
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Sign out failed:", error);
+    }
+    setSettingsOpen(false);
+  }
+
+  function clearAllChats() {
+    if (!window.confirm("Delete all chats on this account in this browser?")) return;
+    setChats([]);
+    newChat();
+    setSettingsOpen(false);
+  }
+
   function newChat() {
     abortRef.current?.abort();
     setChatId(newId());
@@ -542,6 +733,24 @@ export default function Home() {
         </div>
 
         <div className="sidebar-foot small">
+          {user?.email && (
+            <div style={{ marginBottom: 10, overflowWrap: "anywhere" }}>
+              {user.email}
+            </div>
+          )}
+          <div className="actions" style={{ marginBottom: 10 }}>
+            <button
+              className="secondary"
+              onClick={() => setSettingsOpen(true)}
+            >
+              ⚙ Settings
+            </button>
+            {firebaseConfigured && user && !user.email && (
+              <button className="secondary" onClick={openAuth}>
+                Sign in
+              </button>
+            )}
+          </div>
           <div className="actions" style={{ marginBottom: 10 }}>
             <button
               className="secondary"
@@ -555,7 +764,7 @@ export default function Home() {
           </div>
           A calm workspace for thinking and building.
           <br />
-          Starter version · 0.2
+          Starter version · 0.3
         </div>
       </aside>
 
@@ -595,7 +804,9 @@ export default function Home() {
               ))}
             </select>
 
-            <span className="badge">{user ? "Signed in" : "Preview"}</span>
+            <span className="badge">
+              {user ? (user.email ? "Signed in" : "Guest") : "Preview"}
+            </span>
           </div>
         </header>
 
@@ -786,6 +997,181 @@ export default function Home() {
           </p>
         </section>
       </main>
+
+      {settingsOpen && (
+        <div className="modal-back" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Settings"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <strong>Settings</strong>
+              <button className="ghost" onClick={() => setSettingsOpen(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="setting">
+              <div>
+                <div>Account</div>
+                <div className="small">
+                  {user?.email
+                    ? `Signed in as ${user.email}`
+                    : firebaseConfigured
+                    ? "You are using Leo as a guest."
+                    : "Firebase is not configured."}
+                </div>
+              </div>
+              {user?.email ? (
+                <button className="secondary" onClick={() => void logout()}>
+                  Sign out
+                </button>
+              ) : (
+                firebaseConfigured && (
+                  <button className="secondary" onClick={openAuth}>
+                    Sign in
+                  </button>
+                )
+              )}
+            </div>
+
+            <label className="setting">
+              <div>
+                <div>Remember past chats</div>
+                <div className="small">
+                  Leo uses short notes from your earlier chats on this device
+                  to keep context. These notes are sent to the AI provider with
+                  each message.
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="switch"
+                checked={memory}
+                onChange={(event) => setMemory(event.target.checked)}
+              />
+            </label>
+
+            <div className="setting">
+              <div>Theme</div>
+              <select
+                className="select"
+                value={theme}
+                onChange={(event) => setTheme(event.target.value as Theme)}
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </div>
+
+            <div className="setting">
+              <div>
+                <div>Delete chat history</div>
+                <div className="small">Removes all saved chats in this browser.</div>
+              </div>
+              <button className="secondary" onClick={clearAllChats}>
+                Delete all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authOpen && (
+        <div className="modal-back" onClick={() => setAuthOpen(false)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Sign in"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <strong>Sign in with email</strong>
+              <button className="ghost" onClick={() => setAuthOpen(false)}>
+                ✕
+              </button>
+            </div>
+
+            {authStep === "email" ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void requestCode();
+                }}
+              >
+                <p className="small">
+                  Enter your email and we will send you a 6-digit code.
+                </p>
+                <input
+                  className="field"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  autoFocus
+                />
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={authBusy || !authEmail.trim()}
+                >
+                  {authBusy ? "Sending…" : "Send code"}
+                </button>
+              </form>
+            ) : (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void verifyCode();
+                }}
+              >
+                <p className="small">Code sent to {authEmail}.</p>
+                <input
+                  className="field code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={authCode}
+                  onChange={(event) =>
+                    setAuthCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  autoFocus
+                />
+                <div className="actions">
+                  <button
+                    className="primary"
+                    type="submit"
+                    disabled={authBusy || authCode.length !== 6}
+                  >
+                    {authBusy ? "Checking…" : "Sign in"}
+                  </button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => {
+                      setAuthStep("email");
+                      setAuthCode("");
+                      setAuthMsg("");
+                    }}
+                  >
+                    Change email
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {authMsg && (
+              <p className="small" role="status" style={{ marginTop: 12 }}>
+                {authMsg}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
