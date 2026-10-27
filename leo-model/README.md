@@ -22,6 +22,12 @@
 
 Бесплатные GPU обычно дают Kaggle и Google Colab (с лимитами по времени). Проверьте текущие условия.
 
+## С телефона (без компьютера)
+
+Откройте в браузере блокнот Colab и запускайте ячейки по порядку:
+<https://colab.research.google.com/github/harringtonov-cloud/leo.ai/blob/main/leo-model/Leo_Colab.ipynb>
+(на телефоне включите «Версия для ПК» в меню браузера и выберите GPU в настройках среды).
+
 ## Шаги
 
 ```bash
