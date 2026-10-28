@@ -48,7 +48,7 @@ export async function* streamLeo(
   const deadline = Date.now() + (options.deadlineMs ?? 45_000);
 
   // Leo is small: only recent turns, without the long system prompt of the big models.
-  const chat = messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-6);
+  const chat = messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-1);
   const prompt = tokenizer.encodeChat(chat).slice(-(block - maxNew));
   const stop = new Set([tokenizer.special["<|end|>"], tokenizer.special["<|eos|>"]]);
 
@@ -62,7 +62,7 @@ export async function* streamLeo(
   const produced: number[] = [];
   let sent = "";
   for (let n = 0; n < maxNew && logits; n++) {
-    const token = sampleToken(logits, options.temperature ?? 0.7, options.topK ?? 50, options.topP ?? 0.95);
+    const token = sampleToken(logits, options.temperature ?? 0.3, options.topK ?? 20, options.topP ?? 0.9);
     if (stop.has(token)) break;
     produced.push(token);
 
