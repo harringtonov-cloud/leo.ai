@@ -19,7 +19,7 @@ type Message = {
 
 type Mode = "chat" | "code";
 type Theme = "dark" | "light";
-type Preference = "auto" | "fast" | "reasoning" | "coding";
+type Preference = "auto" | "fast" | "reasoning" | "coding" | "leo";
 
 type ProjectFile = {
   path: string;
@@ -45,6 +45,7 @@ const PREFERENCES: { id: Preference; label: string }[] = [
   { id: "fast", label: "Fast" },
   { id: "reasoning", label: "Reasoning" },
   { id: "coding", label: "Coding" },
+  { id: "leo", label: "Leo (own model)" },
 ];
 
 const CHAT_SUGGESTIONS = [

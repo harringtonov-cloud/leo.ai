@@ -76,6 +76,15 @@ MODEL_GENERAL       = leo
 MODEL_CODING        = leo
 ```
 
+## Вариант без отдельного сервера: Leo внутри сайта
+Движок на TypeScript (`src/lib/leo/`) запускает модель прямо в сервере сайта на Vercel, а веса берёт из
+бесплатного репозитория Hugging Face. Подходит для маленьких моделей (`tiny`).
+1. `python export_web.py --ckpt sft_out/ckpt.pt --out leo.bin` (в Colab это ячейка 10) и загрузка `leo.bin`
+   и `tokenizer.json` в репозиторий модели на Hugging Face.
+2. В Vercel: `LEO_WEIGHTS_URL`, `LEO_TOKENIZER_URL` (см. `.env.example`), Redeploy.
+3. На сайте выберите в списке моделей «Leo (own model)» (или `LEO_DEFAULT=1`, чтобы Leo отвечал в режиме «Auto»).
+Проверка движка без PyTorch: `webtest/` (`make_reference.py` + `check_engine.ts`, `check_tokenizer.ts`).
+
 ## Как это устроено
 - `leo/model.py` — трансформер: RMSNorm, RoPE, SwiGLU, grouped-query attention, KV-кэш.
 - `leo/tokenizer.py` — byte-level BPE, обучается на ваших данных; формат чата `<|user|> … <|end|>`.
