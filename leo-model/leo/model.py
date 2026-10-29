@@ -26,6 +26,7 @@ class Config:
 # head_dim is 64 in every preset. Parameter counts include a 16k vocabulary.
 PRESETS = {
     "tiny": dict(block_size=512, n_layer=6, n_head=6, n_kv_head=2, n_embd=384),      # ~15M, trainable on CPU / free GPU
+    "base": dict(block_size=1024, n_layer=8, n_head=8, n_kv_head=2, n_embd=512),     # ~41M with a 32k vocab, still fast enough to run inside the site
     "small": dict(block_size=1024, n_layer=12, n_head=12, n_kv_head=4, n_embd=768),  # ~110M
     "medium": dict(block_size=2048, n_layer=24, n_head=16, n_kv_head=4, n_embd=1024),  # ~370M
 }

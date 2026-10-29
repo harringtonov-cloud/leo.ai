@@ -13,19 +13,32 @@ import numpy as np
 from leo.tokenizer import LeoTokenizer, train_tokenizer
 
 
-def iter_docs(args):
+def parse_sources(args):
+    """--source "dataset|config|text_field|max_docs|split" (repeatable) plus the legacy --hf flags."""
+    sources = []
+    for spec in args.source:
+        name, config, field, max_docs, split = (spec.split("|") + [""] * 5)[:5]
+        sources.append(dict(name=name, config=config or None, field=field or "text",
+                            max_docs=int(max_docs or 0), split=split or "train"))
     if args.hf:
-        from datasets import load_dataset
+        sources.append(dict(name=args.hf, config=args.hf_config, field=args.text_field,
+                            max_docs=args.max_docs, split=args.split))
+    return sources
 
-        ds = load_dataset(args.hf, args.hf_config, split=args.split, streaming=True)
-        for i, example in enumerate(ds):
-            if args.max_docs and i >= args.max_docs:
-                break
-            text = example.get(args.text_field)
-            if isinstance(text, str) and text.strip():
-                yield text
-        return
 
+def hf_docs(src):
+    from datasets import load_dataset
+
+    ds = load_dataset(src["name"], src["config"], split=src["split"], streaming=True)
+    for i, example in enumerate(ds):
+        if src["max_docs"] and i >= src["max_docs"]:
+            break
+        text = example.get(src["field"])
+        if isinstance(text, str) and text.strip():
+            yield text
+
+
+def file_docs(args):
     paths = []
     for pattern in args.input:
         if os.path.isdir(pattern):
@@ -34,7 +47,7 @@ def iter_docs(args):
             paths += glob.glob(pattern)
     paths = sorted(p for p in paths if os.path.isfile(p))
     if not paths:
-        raise SystemExit("No input files found. Use --input or --hf.")
+        raise SystemExit("No input files found.")
     for path in paths:
         with open(path, encoding="utf-8", errors="ignore") as f:
             while True:
@@ -44,9 +57,24 @@ def iter_docs(args):
                 yield chunk
 
 
+def iter_docs(args):
+    """Round-robin over all sources so every language is represented (also in the tokenizer)."""
+    iterators = [hf_docs(src) for src in parse_sources(args)]
+    if args.input:
+        iterators.append(file_docs(args))
+    while iterators:
+        for it in list(iterators):
+            try:
+                yield next(it)
+            except StopIteration:
+                iterators.remove(it)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--input", nargs="*", default=[], help="text files, globs or folders")
+    p.add_argument("--source", action="append", default=[],
+                   help='Hugging Face source "dataset|config|text_field|max_docs|split" (repeatable)')
     p.add_argument("--hf", help="Hugging Face dataset name (streamed)")
     p.add_argument("--hf-config", default=None)
     p.add_argument("--split", default="train")
@@ -57,8 +85,8 @@ def main():
     p.add_argument("--tokenizer-docs", type=int, default=200000, help="documents used to train the tokenizer")
     args = p.parse_args()
 
-    if not args.input and not args.hf:
-        raise SystemExit("Provide --input or --hf")
+    if not args.input and not args.hf and not args.source:
+        raise SystemExit("Provide --input, --source or --hf")
     os.makedirs(args.out, exist_ok=True)
     tok_path = os.path.join(args.out, "tokenizer.json")
 
